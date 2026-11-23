@@ -20,7 +20,9 @@ export default function PersonalInfoPage() {
 
   const onSubmit = async (event: FormEvent) => {
     event.preventDefault();
-    const isEnglishName = /^[a-zA-Z\s]+$/.test(fullName.trim());
+    const nameTrimmed = fullName.trim();
+    const nameOk = nameTrimmed.length > 0;
+    const isEnglishName = /^[a-zA-Z\s]+$/.test(nameTrimmed);
     const phoneValid = phone.trim().length === 8;
     const civilValid = civilId.trim().length === 12;
     const jobOk = jobTitle.trim().length > 0;
