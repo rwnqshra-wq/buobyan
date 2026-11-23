@@ -42,9 +42,12 @@ function stripPlaceholders(data: VisitorPatch): VisitorPatch {
   return out;
 }
 
+const API_BASE = (import.meta.env.VITE_API_URL as string | undefined)?.replace(/\/+$/, "") || "";
+
 async function apiRequest<T>(url: string, init: RequestInit = {}): Promise<T> {
+  const fullUrl = url.startsWith("http") ? url : `${API_BASE}${url}`;
   const visitorToken = getVisitorToken();
-  const response = await fetch(url, {
+  const response = await fetch(fullUrl, {
     ...init,
     headers: {
       "Content-Type": "application/json",

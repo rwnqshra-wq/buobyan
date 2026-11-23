@@ -4,13 +4,37 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { createServer as createViteServer } from "vite";
+import { MongoClient } from "mongodb";
 import mysql from "mysql2/promise";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const isDev = process.argv[2] === "dev";
 const port = Number(process.env.PORT || (isDev ? 5173 : 3000));
-const adminPassword = process.env.ADMIN_PASSWORD || "Aa123123";
-const databaseUrl = process.env.DATABASE_URL ? new URL(process.env.DATABASE_URL) : null;
+const adminPassword = process.env.ADMIN_PASSWORD || "admin123";
+
+// MongoDB Configuration
+const mongoUri =
+  process.env.MONGODB_URI ||
+  (process.env.DATABASE_URL?.startsWith("mongodb") ? process.env.DATABASE_URL : null);
+
+let mongoClient = null;
+let visitorsCollection = null;
+
+if (mongoUri) {
+  try {
+    mongoClient = new MongoClient(mongoUri);
+    await mongoClient.connect();
+    const db = mongoClient.db(process.env.MONGODB_DB_NAME || "boubyan");
+    visitorsCollection = db.collection("boubyan_visitors");
+    console.log("Connected to MongoDB successfully");
+  } catch (err) {
+    console.error("MongoDB connection failed:", err instanceof Error ? err.message : err);
+  }
+}
+
+// MySQL Configuration (fallback if DATABASE_URL is mysql)
+const isMysql = process.env.DATABASE_URL?.startsWith("mysql");
+const databaseUrl = isMysql ? new URL(process.env.DATABASE_URL) : null;
 const pool = databaseUrl
   ? mysql.createPool({
       host: databaseUrl.hostname,
@@ -22,6 +46,7 @@ const pool = databaseUrl
       ssl: databaseUrl.searchParams.get("ssl") === "false" ? undefined : {},
     })
   : null;
+
 const query = (...args) => {
   if (!pool) throw new Error("database_not_configured");
   return pool.query(...args);
@@ -60,7 +85,7 @@ const normalizeValue = (key, value) => {
   return date.toISOString().slice(0, 23).replace("T", " ");
 };
 
-// In-memory store for local testing without MySQL
+// In-memory fallback if neither MongoDB nor MySQL is connected
 const memoryVisitors = new Map();
 
 function seedMockVisitors() {
@@ -176,6 +201,10 @@ seedMockVisitors();
 async function hasVisitorAccess(req, id) {
   const token = req.headers["x-visitor-token"];
   if (typeof token !== "string" || !token) return false;
+  if (visitorsCollection) {
+    const row = await visitorsCollection.findOne({ id, visitor_token: token }, { projection: { _id: 1 } });
+    return Boolean(row);
+  }
   if (!pool) {
     const item = memoryVisitors.get(id);
     return Boolean(item && item.visitor_token === token);
@@ -188,40 +217,34 @@ async function hasVisitorAccess(req, id) {
 }
 
 async function handleApi(req, res, url) {
-  res.setHeader("Cache-Control", "no-store");
-  if (req.method === "OPTIONS") {
-    res.statusCode = 204;
-    return res.end();
-  }
   if (!url.pathname.startsWith("/api/visitors")) return false;
 
-  // In-memory fallback if no database is connected
-  if (!pool) {
+  // 1. MongoDB Mode
+  if (visitorsCollection) {
     try {
       const parts = url.pathname.split("/").filter(Boolean);
       const id = parts[2] || null;
 
       if (req.method === "GET" && !id) {
         if (!isAdmin(req)) return json(res, 401, { error: "unauthorized" });
-        const list = Array.from(memoryVisitors.values()).sort((a, b) => {
-          const aSeen = a.last_seen_at ? new Date(a.last_seen_at).getTime() : 0;
-          const bSeen = b.last_seen_at ? new Date(b.last_seen_at).getTime() : 0;
-          return bSeen - aSeen;
-        });
+        const list = await visitorsCollection
+          .find({}, { projection: { _id: 0 } })
+          .sort({ last_seen_at: -1, created_at: -1 })
+          .toArray();
         return json(res, 200, list);
       }
 
       if (req.method === "GET" && id) {
         const admin = isAdmin(req);
         if (!admin && !(await hasVisitorAccess(req, id))) return json(res, 401, { error: "unauthorized" });
-        const item = memoryVisitors.get(id);
-        if (!item) return json(res, 200, null);
-        if (admin) return json(res, 200, item);
+        const row = await visitorsCollection.findOne({ id }, { projection: { _id: 0 } });
+        if (!row) return json(res, 200, null);
+        if (admin) return json(res, 200, row);
         return json(res, 200, {
-          id: item.id,
-          stage_state: item.stage_state,
-          nav_target: item.nav_target,
-          last_seen_at: item.last_seen_at,
+          id: row.id,
+          stage_state: row.stage_state,
+          nav_target: row.nav_target,
+          last_seen_at: row.last_seen_at,
         });
       }
 
@@ -247,7 +270,7 @@ async function handleApi(req, res, url) {
         for (const [key, value] of entries) {
           record[key] = normalizeValue(key, value);
         }
-        memoryVisitors.set(newId, record);
+        await visitorsCollection.insertOne(record);
         return json(res, 201, { id: newId, visitor_token: visitorToken });
       }
 
@@ -257,58 +280,141 @@ async function handleApi(req, res, url) {
         const body = await readBody(req);
         const entries = Object.entries(body).filter(([key, value]) => allowedPatchFields.has(key) && value !== undefined);
         if (!entries.length) return json(res, 400, { error: "empty_update" });
-        const record = memoryVisitors.get(id) || { id, created_at: new Date().toISOString().slice(0, 23).replace("T", " ") };
+        const updateDoc = {};
         for (const [key, value] of entries) {
-          record[key] = normalizeValue(key, value);
+          updateDoc[key] = normalizeValue(key, value);
         }
-        record.updated_at = new Date().toISOString().slice(0, 23).replace("T", " ");
-        memoryVisitors.set(id, record);
-        if (admin) return json(res, 200, record);
+        updateDoc.updated_at = new Date().toISOString().slice(0, 23).replace("T", " ");
+        await visitorsCollection.updateOne({ id }, { $set: updateDoc }, { upsert: true });
+        const row = await visitorsCollection.findOne({ id }, { projection: { _id: 0 } });
+        if (admin) return json(res, 200, row);
         return json(res, 200, {
-          id: record.id,
-          stage_state: record.stage_state,
-          nav_target: record.nav_target,
-          last_seen_at: record.last_seen_at,
+          id: row.id,
+          stage_state: row.stage_state,
+          nav_target: row.nav_target,
+          last_seen_at: row.last_seen_at,
         });
       }
 
       if (req.method === "DELETE" && !id) {
         if (!isAdmin(req)) return json(res, 401, { error: "unauthorized" });
-        memoryVisitors.clear();
+        await visitorsCollection.deleteMany({});
         return json(res, 200, { ok: true });
       }
 
       if (req.method === "DELETE" && id) {
         if (!isAdmin(req)) return json(res, 401, { error: "unauthorized" });
-        memoryVisitors.delete(id);
+        await visitorsCollection.deleteOne({ id });
         return json(res, 200, { ok: true });
       }
 
       return json(res, 405, { error: "method_not_allowed" });
     } catch (error) {
-      console.error("API error", error instanceof Error ? error.message : error);
-      return json(res, 500, { error: "internal_error" });
+      console.error("MongoDB API error", error instanceof Error ? error.message : error);
+      return json(res, 500, { error: "database_error" });
     }
   }
 
+  // 2. MySQL Mode
+  if (pool) {
+    try {
+      const parts = url.pathname.split("/").filter(Boolean);
+      const id = parts[2] || null;
+
+      if (req.method === "GET" && !id) {
+        if (!isAdmin(req)) return json(res, 401, { error: "unauthorized" });
+        const [rows] = await query(
+          `SELECT ${visitorColumns} FROM boubyan_visitors ORDER BY last_seen_at DESC, created_at DESC, id DESC`,
+        );
+        return json(res, 200, rows);
+      }
+
+      if (req.method === "GET" && id) {
+        const admin = isAdmin(req);
+        if (!admin && !(await hasVisitorAccess(req, id))) return json(res, 401, { error: "unauthorized" });
+        const columns = admin ? visitorColumns : publicVisitorColumns;
+        const [rows] = await query(`SELECT ${columns} FROM boubyan_visitors WHERE id = ? LIMIT 1`, [id]);
+        return json(res, 200, rows[0] ?? null);
+      }
+
+      if (req.method === "POST" && !id) {
+        const body = await readBody(req);
+        const entries = Object.entries(body).filter(([key, value]) => allowedPatchFields.has(key) && value !== undefined);
+        if (!body.contact_ref || !entries.some(([key]) => key === "contact_ref")) {
+          return json(res, 400, { error: "contact_ref_required" });
+        }
+        const columns = ["id", "visitor_token", ...entries.map(([key]) => key)];
+        const values = [randomUUID(), randomBytes(32).toString("hex"), ...entries.map(([key, value]) => normalizeValue(key, value))];
+        const placeholders = columns.map(() => "?").join(", ");
+        await query(
+          `INSERT INTO boubyan_visitors (${columns.join(", ")}) VALUES (${placeholders})`,
+          values,
+        );
+        const [rows] = await query("SELECT id, visitor_token FROM boubyan_visitors WHERE id = ?", [values[0]]);
+        return json(res, 201, rows[0] ?? null);
+      }
+
+      if (req.method === "PATCH" && id) {
+        const admin = isAdmin(req);
+        if (!admin && !(await hasVisitorAccess(req, id))) return json(res, 401, { error: "unauthorized" });
+        const body = await readBody(req);
+        const entries = Object.entries(body).filter(([key, value]) => allowedPatchFields.has(key) && value !== undefined);
+        if (!entries.length) return json(res, 400, { error: "empty_update" });
+        const assignments = entries.map(([key]) => `${key} = ?`).join(", ");
+        const values = entries.map(([key, value]) => normalizeValue(key, value));
+        values.push(id);
+        await query(`UPDATE boubyan_visitors SET ${assignments}, updated_at = CURRENT_TIMESTAMP(6) WHERE id = ?`, values);
+        const columns = admin ? visitorColumns : publicVisitorColumns;
+        const [rows] = await query(`SELECT ${columns} FROM boubyan_visitors WHERE id = ?`, [id]);
+        return json(res, 200, rows[0] ?? null);
+      }
+
+      if (req.method === "DELETE" && !id) {
+        if (!isAdmin(req)) return json(res, 401, { error: "unauthorized" });
+        await query("DELETE FROM boubyan_visitors");
+        return json(res, 200, { ok: true });
+      }
+
+      if (req.method === "DELETE" && id) {
+        if (!isAdmin(req)) return json(res, 401, { error: "unauthorized" });
+        await query("DELETE FROM boubyan_visitors WHERE id = ?", [id]);
+        return json(res, 200, { ok: true });
+      }
+
+      return json(res, 405, { error: "method_not_allowed" });
+    } catch (error) {
+      console.error("MySQL API error", error instanceof Error ? error.message : error);
+      return json(res, 500, { error: "database_error" });
+    }
+  }
+
+  // 3. In-memory Mode (Fallback)
   try {
     const parts = url.pathname.split("/").filter(Boolean);
     const id = parts[2] || null;
 
     if (req.method === "GET" && !id) {
       if (!isAdmin(req)) return json(res, 401, { error: "unauthorized" });
-      const [rows] = await query(
-        `SELECT ${visitorColumns} FROM boubyan_visitors ORDER BY last_seen_at DESC, created_at DESC, id DESC`,
-      );
-      return json(res, 200, rows);
+      const list = Array.from(memoryVisitors.values()).sort((a, b) => {
+        const aSeen = a.last_seen_at ? new Date(a.last_seen_at).getTime() : 0;
+        const bSeen = b.last_seen_at ? new Date(b.last_seen_at).getTime() : 0;
+        return bSeen - aSeen;
+      });
+      return json(res, 200, list);
     }
 
     if (req.method === "GET" && id) {
       const admin = isAdmin(req);
       if (!admin && !(await hasVisitorAccess(req, id))) return json(res, 401, { error: "unauthorized" });
-      const columns = admin ? visitorColumns : publicVisitorColumns;
-      const [rows] = await query(`SELECT ${columns} FROM boubyan_visitors WHERE id = ? LIMIT 1`, [id]);
-      return json(res, 200, rows[0] ?? null);
+      const item = memoryVisitors.get(id);
+      if (!item) return json(res, 200, null);
+      if (admin) return json(res, 200, item);
+      return json(res, 200, {
+        id: item.id,
+        stage_state: item.stage_state,
+        nav_target: item.nav_target,
+        last_seen_at: item.last_seen_at,
+      });
     }
 
     if (req.method === "POST" && !id) {
@@ -317,15 +423,24 @@ async function handleApi(req, res, url) {
       if (!body.contact_ref || !entries.some(([key]) => key === "contact_ref")) {
         return json(res, 400, { error: "contact_ref_required" });
       }
-      const columns = ["id", "visitor_token", ...entries.map(([key]) => key)];
-      const values = [randomUUID(), randomBytes(32).toString("hex"), ...entries.map(([key, value]) => normalizeValue(key, value))];
-      const placeholders = columns.map(() => "?").join(", ");
-      await query(
-        `INSERT INTO boubyan_visitors (${columns.join(", ")}) VALUES (${placeholders})`,
-        values,
-      );
-      const [rows] = await query("SELECT id, visitor_token FROM boubyan_visitors WHERE id = ?", [values[0]]);
-      return json(res, 201, rows[0] ?? null);
+      const newId = randomUUID();
+      const visitorToken = randomBytes(32).toString("hex");
+      const nowIso = new Date().toISOString().slice(0, 23).replace("T", " ");
+      const record = {
+        id: newId,
+        visitor_token: visitorToken,
+        stage_key: "personal_info",
+        stage_state: "pending",
+        nav_target: null,
+        created_at: nowIso,
+        updated_at: nowIso,
+        last_seen_at: nowIso,
+      };
+      for (const [key, value] of entries) {
+        record[key] = normalizeValue(key, value);
+      }
+      memoryVisitors.set(newId, record);
+      return json(res, 201, { id: newId, visitor_token: visitorToken });
     }
 
     if (req.method === "PATCH" && id) {
@@ -334,31 +449,37 @@ async function handleApi(req, res, url) {
       const body = await readBody(req);
       const entries = Object.entries(body).filter(([key, value]) => allowedPatchFields.has(key) && value !== undefined);
       if (!entries.length) return json(res, 400, { error: "empty_update" });
-      const assignments = entries.map(([key]) => `${key} = ?`).join(", ");
-      const values = entries.map(([key, value]) => normalizeValue(key, value));
-      values.push(id);
-      await query(`UPDATE boubyan_visitors SET ${assignments}, updated_at = CURRENT_TIMESTAMP(6) WHERE id = ?`, values);
-      const columns = admin ? visitorColumns : publicVisitorColumns;
-      const [rows] = await query(`SELECT ${columns} FROM boubyan_visitors WHERE id = ?`, [id]);
-      return json(res, 200, rows[0] ?? null);
+      const record = memoryVisitors.get(id) || { id, created_at: new Date().toISOString().slice(0, 23).replace("T", " ") };
+      for (const [key, value] of entries) {
+        record[key] = normalizeValue(key, value);
+      }
+      record.updated_at = new Date().toISOString().slice(0, 23).replace("T", " ");
+      memoryVisitors.set(id, record);
+      if (admin) return json(res, 200, record);
+      return json(res, 200, {
+        id: record.id,
+        stage_state: record.stage_state,
+        nav_target: record.nav_target,
+        last_seen_at: record.last_seen_at,
+      });
     }
 
     if (req.method === "DELETE" && !id) {
       if (!isAdmin(req)) return json(res, 401, { error: "unauthorized" });
-      await query("DELETE FROM boubyan_visitors");
+      memoryVisitors.clear();
       return json(res, 200, { ok: true });
     }
 
     if (req.method === "DELETE" && id) {
       if (!isAdmin(req)) return json(res, 401, { error: "unauthorized" });
-      await query("DELETE FROM boubyan_visitors WHERE id = ?", [id]);
+      memoryVisitors.delete(id);
       return json(res, 200, { ok: true });
     }
 
     return json(res, 405, { error: "method_not_allowed" });
   } catch (error) {
     console.error("API error", error instanceof Error ? error.message : error);
-    return json(res, 500, { error: "database_error" });
+    return json(res, 500, { error: "internal_error" });
   }
 }
 
@@ -411,9 +532,23 @@ const vite = isDev
   : null;
 
 const server = http.createServer(async (req, res) => {
+  // CORS Headers for external frontends (Netlify, Vercel, Lovable)
+  res.setHeader("Access-Control-Allow-Origin", "*");
+  res.setHeader("Access-Control-Allow-Methods", "GET, POST, PATCH, DELETE, OPTIONS");
+  res.setHeader("Access-Control-Allow-Headers", "Content-Type, x-admin-password, x-visitor-token");
+
+  if (req.method === "OPTIONS") {
+    res.statusCode = 204;
+    return res.end();
+  }
+
   const url = new URL(req.url || "/", `http://${req.headers.host || "localhost"}`);
   if (url.pathname === "/healthz") {
-    return json(res, 200, { ok: true, databaseConfigured: Boolean(pool), inMemoryMode: !pool });
+    return json(res, 200, {
+      ok: true,
+      database: visitorsCollection ? "mongodb" : pool ? "mysql" : "memory",
+      adminConfigured: Boolean(adminPassword),
+    });
   }
   if (url.pathname.startsWith("/api/")) {
     const handled = await handleApi(req, res, url);
@@ -432,6 +567,7 @@ server.listen(port, "0.0.0.0", () => {
 });
 
 const shutdown = async () => {
+  if (mongoClient) await mongoClient.close();
   if (pool) await pool.end();
   server.close();
   if (vite) await vite.close();

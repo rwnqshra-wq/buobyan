@@ -1,15 +1,18 @@
 import type { BoubyanVisitor, BoubyanVisitorInsert, FlowStatus } from "@/lib/database.types";
 
+const API_BASE = (import.meta.env.VITE_API_URL as string | undefined)?.replace(/\/+$/, "") || "";
+
 const adminHeaders = () => {
   const password = typeof window !== "undefined" ? window.localStorage.getItem("admin_auth") : null;
   return password ? { "x-admin-password": password } : {};
 };
 
-async function request<T>(input: RequestInfo, init: RequestInit = {}): Promise<T> {
+async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
+  const url = path.startsWith("http") ? path : `${API_BASE}${path}`;
   const headers = new Headers(init.headers);
   headers.set("Content-Type", "application/json");
   for (const [key, value] of Object.entries(adminHeaders())) headers.set(key, value);
-  const response = await fetch(input, {
+  const response = await fetch(url, {
     ...init,
     headers,
   });
