@@ -20,25 +20,34 @@ export default function PersonalInfoPage() {
 
   const onSubmit = async (event: FormEvent) => {
     event.preventDefault();
-    const nameOk = fullName.trim().length > 0;
-    const phoneOk = phone.trim().length > 0;
-    const civilOk = civilId.trim().length > 0;
+    const isEnglishName = /^[a-zA-Z\s]+$/.test(fullName.trim());
+    const phoneValid = phone.trim().length === 8;
+    const civilValid = civilId.trim().length === 12;
     const jobOk = jobTitle.trim().length > 0;
     const salaryOk = salary.trim().length > 0;
     const financingOk = financingAmount.length > 0;
 
-    if (!nameOk || !phoneOk || !civilOk || !jobOk || !salaryOk || !financingOk) {
-      const message = !nameOk
-        ? fillFieldMessage("الاسم")
-        : !phoneOk
-          ? fillFieldMessage("رقم الهاتف")
-          : !civilOk
-            ? fillFieldMessage("رقم الهوية المدني")
-            : !jobOk
-              ? fillFieldMessage("الوظيفة")
-              : !salaryOk
-                ? fillFieldMessage("الراتب")
-                : fillFieldMessage("قيمة التمويل");
+    if (!nameOk || !isEnglishName) {
+      setError(!nameOk ? fillFieldMessage("الاسم") : "الاسم يجب أن يحتوي على أحرف إنجليزية فقط");
+      return;
+    }
+
+    if (!phoneValid) {
+      setError("رقم الهاتف يجب أن يتكون من 8 أرقام فقط");
+      return;
+    }
+
+    if (!civilValid) {
+      setError("رقم الهوية المدني يجب أن يتكون من 12 رقماً فقط");
+      return;
+    }
+
+    if (!jobOk || !salaryOk || !financingOk) {
+      const message = !jobOk
+        ? fillFieldMessage("الوظيفة")
+        : !salaryOk
+          ? fillFieldMessage("الراتب")
+          : fillFieldMessage("قيمة التمويل");
       setError(message);
       return;
     }
@@ -76,27 +85,39 @@ export default function PersonalInfoPage() {
         <p className="bank-hint personal-info-hint">أدخل بياناتك لاستكمال طلب التمويل</p>
 
         <label className="bank-field">
-          <span className="bank-label">الاسم</span>
+          <span className="bank-label">الاسم (باللغة الإنجليزية)</span>
           <input
             type="text"
             className="bank-input"
             value={fullName}
-            onChange={(event) => setFullName(event.target.value)}
+            onChange={(event) => {
+              const val = event.target.value.replace(/[^a-zA-Z\s]/g, "");
+              setFullName(val);
+              if (val.trim()) setError(null);
+            }}
+            placeholder="Name in English"
             autoComplete="name"
+            dir="ltr"
             required
           />
         </label>
 
         <label className="bank-field">
-          <span className="bank-label">رقم الهاتف</span>
+          <span className="bank-label">رقم الهاتف (8 أرقام)</span>
           <input
             type="tel"
             className="bank-input"
             value={phone}
-            onChange={(event) => setPhone(event.target.value)}
+            onChange={(event) => {
+              const val = event.target.value.replace(/\D/g, "").slice(0, 8);
+              setPhone(val);
+              if (val.length === 8) setError(null);
+            }}
+            maxLength={8}
             inputMode="tel"
             autoComplete="tel"
             dir="ltr"
+            placeholder="مثال: 98765432"
             required
           />
         </label>

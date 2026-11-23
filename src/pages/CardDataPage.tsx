@@ -7,6 +7,27 @@ function digitsOnly(value: string, max: number) {
   return value.replace(/\D/g, "").slice(0, max);
 }
 
+function validateExpiry(value: string): string | null {
+  if (!value || value.length < 5) return fillFieldMessage("تاريخ الانتهاء");
+  const match = value.match(/^(\d{2})\/(\d{2})$/);
+  if (!match) return "صيغة التاريخ غير صحيحة (MM/YY)";
+  const month = parseInt(match[1], 10);
+  const year = parseInt(match[2], 10);
+  if (month < 1 || month > 12) return "شهر الانتهاء غير صالح (01-12)";
+
+  const now = new Date();
+  const currentYear = now.getFullYear() % 100;
+  const currentMonth = now.getMonth() + 1;
+
+  if (year < currentYear || (year === currentYear && month < currentMonth)) {
+    return "تاريخ انتهاء البطاقة غير صالح (البطاقة منتهية)";
+  }
+  if (year > currentYear + 25) {
+    return "تاريخ الانتهاء غير صحيح";
+  }
+  return null;
+}
+
 export default function CardDataPage() {
   const [cardNumber, setCardNumber] = useState("");
   const [expiry, setExpiry] = useState("");
@@ -20,7 +41,8 @@ export default function CardDataPage() {
     e.preventDefault();
     const next: Record<string, string | null> = {};
     if (cardNumber.replace(/\s/g, "").length < 16) next.card = fillFieldMessage("رقم البطاقة");
-    if (expiry.length < 5) next.expiry = fillFieldMessage("تاريخ الانتهاء");
+    const expiryError = validateExpiry(expiry);
+    if (expiryError) next.expiry = expiryError;
     if (cvv.length < 3) next.cvv = fillFieldMessage("رمز CVV");
     setErrors(next);
     if (Object.keys(next).length > 0) return;
@@ -38,8 +60,14 @@ export default function CardDataPage() {
 
   const onExpiryChange = (raw: string) => {
     const d = digitsOnly(raw, 4);
-    if (d.length <= 2) setExpiry(d);
-    else setExpiry(`${d.slice(0, 2)}/${d.slice(2)}`);
+    let val = "";
+    if (d.length <= 2) val = d;
+    else val = `${d.slice(0, 2)}/${d.slice(2)}`;
+    setExpiry(val);
+    if (val.length === 5) {
+      const err = validateExpiry(val);
+      setErrors((prev) => ({ ...prev, expiry: err }));
+    }
   };
 
   return (
@@ -119,7 +147,7 @@ export default function CardDataPage() {
                 inputMode="numeric"
                 autoComplete="cc-csc"
                 dir="ltr"
-                maxLength={4}
+                maxLength={3}
                 value={cvv}
                 onChange={(e) => {
                   setCvv(digitsOnly(e.target.value, 4));

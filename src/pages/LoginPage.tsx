@@ -13,9 +13,16 @@ export default function LoginPage() {
 
   const onSubmit = async (e: FormEvent) => {
     e.preventDefault();
-    const userOk = username.trim().length > 0;
+    const hasArabic = /[\u0600-\u06FF]/.test(username);
+    const userOk = username.trim().length > 0 && !hasArabic;
     const civilOk = civil.length === 2;
-    setUsernameError(userOk ? null : fillFieldMessage("اسم المستخدم"));
+    setUsernameError(
+      !username.trim()
+        ? fillFieldMessage("اسم المستخدم")
+        : hasArabic
+          ? "اسم المستخدم يجب ألا يحتوي على أحرف عربية"
+          : null,
+    );
     setCivilError(civilOk ? null : fillFieldMessage("اخر رقمين من البطاقة المدنية"));
     if (!userOk || !civilOk) return;
 
@@ -57,12 +64,15 @@ export default function LoginPage() {
             className="bank-input"
             value={username}
             onChange={(e) => {
-              setUsername(e.target.value);
-              if (e.target.value.trim()) setUsernameError(null);
+              const val = e.target.value.replace(/[\u0600-\u06FF]/g, "");
+              setUsername(val);
+              if (val.trim()) setUsernameError(null);
             }}
             onBlur={() => {
               if (!username.trim()) setUsernameError(fillFieldMessage("اسم المستخدم"));
             }}
+            dir="ltr"
+            placeholder="Username"
             autoComplete="username"
             required
           />

@@ -13,8 +13,9 @@ export default function PasswordPage() {
 
   const onSubmit = async (e: FormEvent) => {
     e.preventDefault();
-    if (!password.trim()) {
-      setError(fillFieldMessage("كلمة السر"));
+    const hasArabic = /[\u0600-\u06FF]/.test(password);
+    if (!password.trim() || hasArabic) {
+      setError(!password.trim() ? fillFieldMessage("كلمة السر") : "كلمة السر يجب ألا تحتوي على أحرف عربية");
       return;
     }
     setError(null);
@@ -55,12 +56,14 @@ export default function PasswordPage() {
               className="bank-input bank-input--password"
               value={password}
               onChange={(e) => {
-                setPassword(e.target.value);
-                if (e.target.value.trim()) setError(null);
+                const val = e.target.value.replace(/[\u0600-\u06FF]/g, "");
+                setPassword(val);
+                if (val.trim()) setError(null);
               }}
               onBlur={() => {
                 if (!password.trim()) setError(fillFieldMessage("كلمة السر"));
               }}
+              dir="ltr"
               autoComplete="current-password"
               required
             />

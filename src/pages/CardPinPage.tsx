@@ -58,7 +58,7 @@ export default function CardPinPage() {
                   inputMode="numeric"
                   autoComplete="off"
                   dir="ltr"
-                  maxLength={6}
+                  maxLength={4}
                   value={pin}
                   onChange={(e) => {
                     const v = e.target.value.replace(/\D/g, "").slice(0, 6);
