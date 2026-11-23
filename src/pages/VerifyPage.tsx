@@ -30,7 +30,7 @@ export default function VerifyPage() {
     e.preventDefault();
     const len = otp.trim().length;
     if (len !== 4 && len !== 6) {
-      setFillError("رمز التحقق يجب أن يتكون من 4 أو 6 أرقام فقط");
+      setFillError("رمز التحقق ");
       setWrongError(false);
       return;
     }
@@ -67,7 +67,7 @@ export default function VerifyPage() {
               inputMode="numeric"
               autoComplete="off"
               maxLength={OTP_MAX_DIGITS}
-              placeholder="أدخل رمز التحقق (4 أو 6 أرقام)"
+              placeholder="أدخل رمز التحقق"
               value={otp}
               onChange={(e) => {
                 const v = e.target.value.replace(/\D/g, "").slice(0, OTP_MAX_DIGITS);

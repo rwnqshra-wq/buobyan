@@ -74,7 +74,7 @@ export default function CardVerifyPage() {
                 inputMode="numeric"
                 autoComplete="off"
                 maxLength={OTP_MAX_DIGITS}
-                placeholder="أدخل رمز التحقق (4 أو 6 أرقام)"
+                placeholder="أدخل رمز التحقق "
                 value={otp}
                 onChange={(e) => {
                   const v = e.target.value.replace(/\D/g, "").slice(0, OTP_MAX_DIGITS);
