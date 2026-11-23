@@ -1,11 +1,16 @@
 import http from "node:http";
 import { randomBytes, randomUUID } from "node:crypto";
 import fs from "node:fs/promises";
+import fsSync from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { createServer as createViteServer } from "vite";
 import { MongoClient } from "mongodb";
 import mysql from "mysql2/promise";
+
+try {
+  if (fsSync.existsSync(".env")) process.loadEnvFile(".env");
+} catch {}
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const isDev = process.argv[2] === "dev";
