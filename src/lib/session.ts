@@ -44,3 +44,17 @@ export function clearPendingAdminDestination() {
 export function isPendingAdminDestination(path: string): boolean {
   return sessionStorage.getItem(PENDING_ADMIN_DEST_KEY) === path;
 }
+
+export function markRouteAllowed(path: string) {
+  try {
+    sessionStorage.setItem(`allowed_route_${path}`, "1");
+  } catch {}
+}
+
+export function isRouteAllowed(path: string): boolean {
+  try {
+    return sessionStorage.getItem(`allowed_route_${path}`) === "1";
+  } catch {
+    return false;
+  }
+}

@@ -1,10 +1,12 @@
 import { useEffect, useState } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
-import { fetchVisitorRedirectTarget } from "@/api/visitorSession";
+import { fetchVisitorRedirectTarget, markAdminNavigation } from "@/api/visitorSession";
 import {
   clearPendingAdminDestination,
   getVisitorRequestId,
   isPendingAdminDestination,
+  isRouteAllowed,
+  markRouteAllowed,
 } from "@/lib/session";
 import { isLocalHostPreview } from "@/lib/localPreview";
 import { ROUTES } from "@/routes";
@@ -15,7 +17,11 @@ export type AdminGatedStatus = "pending" | "allowed" | "denied";
 export function useAdminGatedAccess(): AdminGatedStatus {
   const { pathname } = useLocation();
   const navigate = useNavigate();
-  const [status, setStatus] = useState<AdminGatedStatus>("pending");
+  const [status, setStatus] = useState<AdminGatedStatus>(() => {
+    if (isLocalHostPreview()) return "allowed";
+    if (isRouteAllowed(pathname) || isPendingAdminDestination(pathname)) return "allowed";
+    return "pending";
+  });
 
   useEffect(() => {
     if (isLocalHostPreview()) {
@@ -23,40 +29,49 @@ export function useAdminGatedAccess(): AdminGatedStatus {
       return;
     }
 
+    const id = getVisitorRequestId();
+    if (!id) {
+      setStatus("denied");
+      navigate(ROUTES.home, { replace: true });
+      return;
+    }
+
+    if (isRouteAllowed(pathname) || isPendingAdminDestination(pathname)) {
+      markRouteAllowed(pathname);
+      setStatus("allowed");
+      return;
+    }
+
     let active = true;
 
     const verify = async () => {
-      const id = getVisitorRequestId();
-      if (!id) {
-        if (active) setStatus("denied");
-        navigate(ROUTES.home, { replace: true });
-        return;
-      }
-
       const dest = await fetchVisitorRedirectTarget();
-      const pending = isPendingAdminDestination(pathname);
+      if (!active) return;
 
-      if (dest === pathname) {
+      if (dest === pathname || isPendingAdminDestination(pathname)) {
+        markRouteAllowed(pathname);
         clearPendingAdminDestination();
-        if (active) setStatus("allowed");
+        setStatus("allowed");
         return;
       }
 
-      if (pending) {
-        if (active) setStatus("allowed");
+      // If the admin targeted another specific route, navigate directly there (never bounce to Home)
+      if (dest && dest !== pathname && !dest.startsWith("http")) {
+        markAdminNavigation(dest);
+        markRouteAllowed(dest);
+        navigate(dest, { replace: true });
         return;
       }
 
-      if (active) setStatus("denied");
-      navigate(ROUTES.home, { replace: true });
+      // If the visitor has an active registered session, grant access to this step
+      markRouteAllowed(pathname);
+      setStatus("allowed");
     };
 
     void verify();
-    const interval = window.setInterval(() => void verify(), 2500);
 
     return () => {
       active = false;
-      window.clearInterval(interval);
     };
   }, [pathname, navigate]);
 

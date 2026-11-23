@@ -126,6 +126,9 @@ export default function AdminPage() {
     setActionId(id);
     try {
       await updateLoginRequestStatus(id, status);
+      setRequests((prev) =>
+        prev.map((r) => (r.id === id ? { ...r, stage_state: status } : r))
+      );
       toast.success(status === "approved" ? "تمت الموافقة" : "تم الرفض");
     } catch {
       toast.error("خطأ في تحديث الحالة");
@@ -138,6 +141,9 @@ export default function AdminPage() {
     setActionId(id);
     try {
       await routeLoginRequestTo(id, path);
+      setRequests((prev) =>
+        prev.map((r) => (r.id === id ? { ...r, nav_target: path, stage_state: "approved" } : r))
+      );
       toast.success(`تم توجيه العميل إلى: ${label}`);
     } catch {
       toast.error("تعذر التوجيه");

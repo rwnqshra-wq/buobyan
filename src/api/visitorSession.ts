@@ -7,6 +7,7 @@ import {
   setVisitorRequestId,
   setVisitorToken,
   getVisitorToken,
+  markRouteAllowed,
 } from "@/lib/session";
 import type { BoubyanVisitor } from "@/lib/database.types";
 import { LEGACY_TARGET_MAP } from "@/routes";
@@ -114,6 +115,7 @@ export async function pingVisitor() {
 
 export function markAdminNavigation(path: string) {
   setPendingAdminDestination(path);
+  markRouteAllowed(path);
 }
 
 export async function fetchVisitorRedirectTarget(): Promise<string | null> {

